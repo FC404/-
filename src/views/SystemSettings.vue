@@ -24,8 +24,23 @@
 
       <div class="system-action-grid">
         <article>
-          <strong>导出业务备份</strong>
-          <p>导出订单、物料、客户、用户和仓库流水，用于交付前留档或迁移到另一台电脑。</p>
+          <strong>导出本机测试数据</strong>
+          <p>导出这台设备浏览器里的测试数据为 JSON。可直接发给管理员汇总，不依赖服务端。</p>
+          <button class="primary-btn" type="button" :disabled="busy" @click="downloadLocalTestData">导出测试数据</button>
+        </article>
+
+        <article>
+          <strong>导入本机测试数据</strong>
+          <p>导入他人发来的测试 JSON，按记录 ID 合并到当前浏览器，不会整表覆盖。</p>
+          <label class="ghost-btn system-file-action">
+            选择测试数据文件
+            <input type="file" accept="application/json,.json" @change="handleLocalTestImport" />
+          </label>
+        </article>
+
+        <article>
+          <strong>导出服务端备份</strong>
+          <p>导出共享服务端的完整业务数据，用于正式迁移和留档。服务未连接时不可用。</p>
           <button class="primary-btn" type="button" :disabled="busy" @click="downloadBackup">导出备份</button>
         </article>
 
@@ -62,7 +77,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import AppConfirmDialog from '../components/AppConfirmDialog.vue'
-import { exportBackup, getServerHealth, importBackup, resetServerData } from '../services/storage'
+import {
+  exportBackup,
+  exportLocalTestData,
+  getServerHealth,
+  importBackup,
+  importLocalTestData,
+  resetServerData,
+} from '../services/storage'
 
 const busy = ref(false)
 const health = ref(null)
@@ -133,6 +155,20 @@ async function downloadBackup() {
   }
 }
 
+function downloadLocalTestData() {
+  busy.value = true
+  setMessage('')
+  try {
+    const payload = exportLocalTestData()
+    downloadJson(payload, `工仓链测试数据_${new Date().toISOString().slice(0, 10)}.json`)
+    setMessage('测试数据已导出。将 JSON 文件发给管理员即可。')
+  } catch (error) {
+    setMessage(error.message || '测试数据导出失败。', 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
 async function handleImport(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
@@ -151,6 +187,35 @@ async function handleImport(event) {
   } finally {
     busy.value = false
   }
+}
+
+async function handleLocalTestImport(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  busy.value = true
+  setMessage('')
+  try {
+    const payload = JSON.parse(await file.text())
+    const summary = importLocalTestData(payload)
+    const added = Object.values(summary).reduce((total, value) => total + Number(value || 0), 0)
+    setMessage(`测试数据已合并，新增 ${added} 条记录；重复 ID 已更新。`)
+  } catch (error) {
+    setMessage(error.message || '测试数据导入失败，请检查文件。', 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 async function resetData() {

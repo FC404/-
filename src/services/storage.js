@@ -2,6 +2,16 @@ const APP_NAMESPACE = 'factory-chain'
 const APP_VERSION = '2026-08-product-v5-compact-demo'
 const API_TIMEOUT = 1800
 const listSubscribers = new Map()
+const LOCAL_TEST_COLLECTIONS = [
+  'orders',
+  'materials',
+  'materialCategories',
+  'customers',
+  'users',
+  'warehouseRecords',
+  'warehouseInboundRecords',
+  'warehouseOutboundRecords',
+]
 
 function isBrowser() {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined'
@@ -90,6 +100,55 @@ export function clearProductData() {
     .forEach((key) => localStorage.removeItem(key))
 }
 
+export function exportLocalTestData() {
+  if (!isBrowser()) throw new Error('当前环境无法导出浏览器测试数据')
+
+  const collections = Object.fromEntries(LOCAL_TEST_COLLECTIONS.map((name) => [name, loadList(name, [])]))
+  return {
+    product: '工仓链',
+    format: 'browser-local-test-data',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: {
+      origin: window.location.origin,
+      storage: 'localStorage',
+    },
+    collections,
+    mobile: {
+      warehouseRecords: loadRawLocalValue('mobile-warehouse-records', []),
+      stock: loadRawLocalValue('mobile-demo-stock', null),
+    },
+  }
+}
+
+export function importLocalTestData(payload) {
+  if (!isBrowser()) throw new Error('当前环境无法导入浏览器测试数据')
+  if (payload?.format !== 'browser-local-test-data' || payload?.version !== 1 || !payload?.collections) {
+    throw new Error('不是有效的工仓链本机测试数据文件')
+  }
+
+  const summary = {}
+  LOCAL_TEST_COLLECTIONS.forEach((name) => {
+    const incoming = payload.collections[name]
+    if (!Array.isArray(incoming)) return
+    const merged = mergeRecords(loadList(name, []), incoming)
+    saveList(name, merged.records)
+    summary[name] = merged.added
+  })
+
+  if (Array.isArray(payload.mobile?.warehouseRecords)) {
+    const current = loadRawLocalValue('mobile-warehouse-records', [])
+    const merged = mergeRecords(Array.isArray(current) ? current : [], payload.mobile.warehouseRecords)
+    localStorage.setItem('mobile-warehouse-records', JSON.stringify(merged.records))
+    summary.mobileWarehouseRecords = merged.added
+  }
+  if (payload.mobile?.stock !== null && payload.mobile?.stock !== undefined) {
+    localStorage.setItem('mobile-demo-stock', String(payload.mobile.stock))
+  }
+
+  return summary
+}
+
 export async function hydrateList(name, targetRef, seed = []) {
   const base = apiBase()
   if (!base) return
@@ -122,6 +181,35 @@ function notifyList(name, records) {
   const subscribers = listSubscribers.get(name)
   if (!subscribers) return
   subscribers.forEach((listener) => listener(clone(records)))
+}
+
+function loadRawLocalValue(name, fallback) {
+  try {
+    const raw = localStorage.getItem(name)
+    return raw ? JSON.parse(raw) : fallback
+  } catch (error) {
+    return fallback
+  }
+}
+
+function mergeRecords(currentRecords, incomingRecords) {
+  const current = Array.isArray(currentRecords) ? clone(currentRecords) : []
+  const incoming = Array.isArray(incomingRecords) ? clone(incomingRecords) : []
+  const positions = new Map(current.filter((record) => record?.id).map((record, index) => [String(record.id), index]))
+  let added = 0
+
+  incoming.forEach((record) => {
+    const id = record?.id ? String(record.id) : ''
+    if (!id || !positions.has(id)) {
+      current.push(record)
+      if (id) positions.set(id, current.length - 1)
+      added += 1
+      return
+    }
+    current[positions.get(id)] = { ...current[positions.get(id)], ...record }
+  })
+
+  return { records: current, added }
 }
 
 export async function loginWithApi(phone, password) {
